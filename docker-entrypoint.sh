@@ -2,6 +2,8 @@
 #VERSION 0.2.2 by @d3vilh@github.com aka Mr. Philipp
 set -e
 
+: "${PROCESS_IPTABLES:=true}"
+
 #Variables
 EASY_RSA=/usr/share/easy-rsa
 OPENVPN_DIR=/etc/openvpn
@@ -45,7 +47,6 @@ if [[ ! -f $OPENVPN_DIR/pki/ca.crt ]]; then
     # Copy to mounted volume
     cp -r $EASY_RSA/pki/. $OPENVPN_DIR/pki
 else
-
     echo 'PKI already set up.'
 fi
 
@@ -63,17 +64,19 @@ echo 'Configuring networking rules...'
 echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf
 sysctl -p /etc/sysctl.conf
 
-echo 'Configuring iptables...'
-echo 'NAT for OpenVPN clients'
-iptables -t nat -A POSTROUTING -s $TRUST_SUB -o eth0 -j MASQUERADE
-iptables -t nat -A POSTROUTING -s $GUEST_SUB -o eth0 -j MASQUERADE
+if [[ "$PROCESS_IPTABLES" == "true" ]]; then
+    echo 'Configuring iptables...'
+    echo 'NAT for OpenVPN clients'
+    iptables -t nat -A POSTROUTING -s $TRUST_SUB -o eth0 -j MASQUERADE
+    iptables -t nat -A POSTROUTING -s $GUEST_SUB -o eth0 -j MASQUERADE
 
-echo 'Blocking ICMP for external clients'
-iptables -A FORWARD -p icmp -j DROP --icmp-type echo-request -s $GUEST_SUB 
-iptables -A FORWARD -p icmp -j DROP --icmp-type echo-reply -s $GUEST_SUB 
+    echo 'Blocking ICMP for external clients'
+    iptables -A FORWARD -p icmp -j DROP --icmp-type echo-request -s $GUEST_SUB 
+    iptables -A FORWARD -p icmp -j DROP --icmp-type echo-reply -s $GUEST_SUB 
 
-echo 'Blocking internal home subnet to access from external openvpn clients (Internet still available)'
-iptables -A FORWARD -s $GUEST_SUB -d $HOME_SUB -j DROP
+    echo 'Blocking internal home subnet to access from external openvpn clients (Internet still available)'
+    iptables -A FORWARD -s $GUEST_SUB -d $HOME_SUB -j DROP
+fi
 
 if [[ ! -s fw-rules.sh ]]; then
     echo "No additional firewall rules to apply."
@@ -83,10 +86,12 @@ else
     echo 'Additional firewall rules applied.'
 fi
 
-echo 'IPT MASQ Chains:'
-iptables -t nat -L | grep MASQ
-echo 'IPT FWD Chains:'
-iptables -v -x -n -L | grep DROP 
+if [[ "$PROCESS_IPTABLES" == "true" ]]; then
+    echo 'IPT MASQ Chains:'
+    iptables -t nat -L | grep MASQ
+    echo 'IPT FWD Chains:'
+    iptables -v -x -n -L | grep DROP
+fi
 
 echo 'Start openvpn process...'
 /usr/sbin/openvpn --cd $OPENVPN_DIR --script-security 2 --config $OPENVPN_DIR/server.conf
